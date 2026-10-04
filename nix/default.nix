@@ -9,6 +9,8 @@ let
 
   generateDir = "/tmp/nix-optimized-pgo";
 
+  bolt = pkgs.llvmPackages.bolt;
+
   withFlags =
     flags: nix:
     nix.overrideAllMesonComponents (
@@ -16,6 +18,39 @@ let
         env = (prevAttrs.env or { }) // {
           NIX_CFLAGS_COMPILE = flags;
         };
+      }
+    );
+
+  withRelocs =
+    nix:
+    nix.overrideAllMesonComponents (
+      _: prevAttrs: {
+        env = (prevAttrs.env or { }) // {
+          NIX_LDFLAGS = "--emit-relocs";
+        };
+        stripDebugFlags = [
+          "-S"
+          "-p"
+          "--keep-file-symbols"
+        ];
+      }
+    );
+
+  withBolt =
+    profile: nix:
+    nix.overrideAllMesonComponents (
+      _: prevAttrs: {
+        postFixup = (prevAttrs.postFixup or "") + ''
+          for so in $out/lib/libnix*.so.*; do
+            fdata=${profile}/$(basename $so).fdata
+            if [ -e $fdata ]; then
+              ${bolt}/bin/llvm-bolt $so -o $so.bolt -data=$fdata \
+                -reorder-blocks=ext-tsp -reorder-functions=cdsort -split-functions \
+                -split-all-cold -split-eh -icf=all -use-gnu-stack -no-huge-pages -bolt-info=false
+              mv $so.bolt $so
+            fi
+          done
+        '';
       }
     );
 
@@ -57,26 +92,45 @@ let
         }
       );
 
+  train = nix: ''
+    export NIX_STATE_DIR=$TMPDIR/state
+    export NIX_CONFIG="extra-experimental-features = nix-command"
+    ${nix}/bin/nix-env -qaP --json --meta -f ${pkgs.path} > /dev/null
+    ${nix}/bin/nix eval --read-only --raw --impure --expr \
+      'import ${root + "/workloads/instantiate.nix"} { nixpkgs = ${pkgs.path}; system = "${system}"; }'
+  '';
+
   optimize =
     name: nix:
     let
       instrumented = (withFlags "-fprofile-generate=${generateDir}" nix).overrideAttrs {
         doCheck = false;
       };
-      profile = pkgs.runCommand "${name}-pgo-profile" { } ''
-        export NIX_STATE_DIR=$TMPDIR/state
-        export NIX_CONFIG="extra-experimental-features = nix-command"
+      pgoProfile = pkgs.runCommand "${name}-pgo-profile" { } ''
         export GCOV_PREFIX=$TMPDIR/gcov
-        ${instrumented}/bin/nix-env -qaP --json --meta -f ${pkgs.path} > /dev/null
-        ${instrumented}/bin/nix eval --read-only --raw --impure --expr \
-          'import ${root + "/workloads/instantiate.nix"} { nixpkgs = ${pkgs.path}; system = "${system}"; }'
+        ${train instrumented}
         mkdir $out
         cp $GCOV_PREFIX${generateDir}/*.gcda $out/
       '';
+      pgo = withRelocs (
+        withFlags "-fprofile-use=${pgoProfile} -fprofile-partial-training -fno-reorder-blocks-and-partition" nix
+      );
+      boltProfile = pkgs.runCommand "${name}-bolt-profile" { } ''
+        mkdir lib fdata $out
+        for so in ${lib.concatMapStringsSep " " (p: "${p}/lib/libnix*.so.*") (lib.attrValues pgo.libs)}; do
+          ${bolt}/bin/llvm-bolt $so -o lib/$(basename $so) -instrument \
+            -instrumentation-file=$PWD/fdata/$(basename $so) -instrumentation-file-append-pid
+        done
+        export LD_LIBRARY_PATH=$PWD/lib
+        ${train (pgo.overrideAttrs { doCheck = false; })}
+        for n in $(ls fdata | sed 's/\.[0-9]*\.fdata$//' | sort -u); do
+          ${bolt}/bin/merge-fdata fdata/$n.*.fdata > $out/$n.fdata
+        done
+      '';
     in
-    (withFlags "-fprofile-use=${profile} -fprofile-partial-training" nix).overrideAttrs (prevAttrs: {
+    (withBolt boltProfile pgo).overrideAttrs (prevAttrs: {
       passthru = (prevAttrs.passthru or { }) // {
-        inherit instrumented profile;
+        inherit instrumented pgoProfile boltProfile;
       };
     });
 

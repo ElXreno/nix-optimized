@@ -4,7 +4,7 @@ Nix from nixpkgs-unstable, rebuilt with profile-guided optimization, plus a set 
 
 ## How it works
 
-The profile is just another derivation. It runs an instrumented Nix (`-fprofile-generate`) inside the build sandbox, against a throwaway store, on nixpkgs alone: `nix-env -qa` over the whole tree, then instantiating `python3Packages`, a handful of heavy applications and the NixOS closures from `nixos/release.nix`. The optimized Nix is built with `-fprofile-use` on that output and runs its full test suite.
+The profile is just another derivation. It runs an instrumented Nix (`-fprofile-generate`) inside the build sandbox, against a throwaway store, on nixpkgs alone: `nix-env -qa` over the whole tree, then instantiating `python3Packages`, a handful of heavy applications and the NixOS closures from `nixos/release.nix`. The optimized Nix is built with `-fprofile-use` on that output. Its libraries then go through BOLT with a second profile, collected the same way from BOLT-instrumented copies, and the result runs its full test suite.
 
 There is no training data in the repository, and Nix itself decides when to retrain: the profile is rebuilt only when one of its inputs changes, that is nixpkgs, the patches, the flags or the workload.
 
