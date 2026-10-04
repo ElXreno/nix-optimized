@@ -1,0 +1,15 @@
+diff --git a/os_dep.c b/os_dep.c
+index 94f196b..2c8cd43 100644
+--- a/os_dep.c
++++ b/os_dep.c
+@@ -2299,6 +2299,10 @@ void GC_register_data_segments(void)
+     if (((word)result % HBLKSIZE) != 0)
+       ABORT(
+        "GC_unix_get_mem: Memory returned by mmap is not aligned to HBLKSIZE.");
++#   if defined(LINUX) && defined(MADV_HUGEPAGE)
++      if (bytes >= ((size_t)2 << 20))
++        (void)madvise(result, bytes, MADV_HUGEPAGE);
++#   endif
+     return((ptr_t)result);
+   }
+ # endif  /* !MSWIN_XBOX1 */

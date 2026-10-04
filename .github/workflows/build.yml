@@ -1,0 +1,70 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      any: ${{ steps.matrix.outputs.any }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v17
+        with:
+          name: elxreno
+      - id: matrix
+        name: Evaluate the checks
+        run: |
+          nix run --inputs-from . nixpkgs#nix-eval-jobs -- \
+            --flake .#checks --force-recurse --check-cache-status --workers 2 > jobs.jsonl
+          if jq -e 'select(.error)' jobs.jsonl > /dev/null; then
+            jq -r 'select(.error) | "\(.attr): \(.error)"' jobs.jsonl
+            exit 1
+          fi
+          jq -cs '{include: map(select(.isCached | not) | {attr, system, os: (if .system == "aarch64-linux" then "ubuntu-24.04-arm" else "ubuntu-latest" end)})}' jobs.jsonl > matrix.json
+          jq . matrix.json
+          echo "matrix=$(cat matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "any=$(jq '.include | length > 0' matrix.json)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: eval
+    if: needs.eval.outputs.any == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.eval.outputs.matrix) }}
+    name: ${{ matrix.attr }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v17
+        with:
+          name: elxreno
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Build
+        run: nix build -L --no-link ".#checks.${{ matrix.attr }}"
+
+  ci:
+    needs: [eval, build]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          echo "eval: ${{ needs.eval.result }}, build: ${{ needs.build.result }}"
+          [ "${{ needs.eval.result }}" = success ]
+          case "${{ needs.build.result }}" in success | skipped) ;; *) exit 1 ;; esac
