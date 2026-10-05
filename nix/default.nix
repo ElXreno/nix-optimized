@@ -46,7 +46,7 @@ let
             if [ -e $fdata ]; then
               ${bolt}/bin/llvm-bolt $so -o $so.bolt -data=$fdata \
                 -reorder-blocks=ext-tsp -reorder-functions=cdsort -split-functions \
-                -split-all-cold -split-eh -icf=all -use-gnu-stack -no-huge-pages -bolt-info=false
+                -split-all-cold -split-eh -no-huge-pages -bolt-info=false
               mv $so.bolt $so
             fi
           done
