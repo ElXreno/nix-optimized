@@ -55,6 +55,8 @@ jobs:
         with:
           name: elxreno
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      # from NixOS/nix ci.yml, see https://github.com/NixOS/nix/commit/1c63dc254d
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build
         run: nix build -L --no-link ".#checks.${{ matrix.attr }}"
 
