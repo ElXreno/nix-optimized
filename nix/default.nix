@@ -57,11 +57,6 @@ let
   upstreamPatches = {
     "2.35" = [
       (pkgs.fetchpatch {
-        name = "nix-16190-srctostore-on-fetcher-cache-hit.patch";
-        url = "https://github.com/NixOS/nix/commit/30820a54b112f4842bdb7df28b61b2a607e54033.patch";
-        hash = "sha256-Yvn9a059LvW9FkSGH20LRPlBIhmVqQxGMBXke+hxkgs=";
-      })
-      (pkgs.fetchpatch {
         name = "nix-16244-dedup-addtemproot.patch";
         url = "https://github.com/NixOS/nix/commit/d4c237e7216eea15fef6b8339889dbe7a0e1ad54.patch";
         hash = "sha256-Ef1Aj3Wrm8JttWfPzRpGjeC6t/uue5oX0rAiSCjlCZk=";
