@@ -20,6 +20,22 @@ let
         rev = "d4c237e7216eea15fef6b8339889dbe7a0e1ad54";
         hash = "sha256-Ef1Aj3Wrm8JttWfPzRpGjeC6t/uue5oX0rAiSCjlCZk=";
       }
+      {
+        rev = "f8233f32b7e7371995ec4e8b4d41fd0bbfc6ec02";
+        hash = "sha256-wdCEGUGACvxvij8G6BjhV1UB3xPlYXeKE+suY1kZboQ=";
+      }
+      {
+        rev = "163bc20dc21cdd2cada95fa0c11c7b0c0c574221";
+        hash = "sha256-i/nbvNBnbndD5M4BSOnqMzipu1NVAO88ea0mDSmo8xQ=";
+      }
+      {
+        rev = "fc8f3a516c4c65079de03740d25e16719d7ed818";
+        hash = "sha256-/Ebr0KB7WC8eOWaB29PruE39SqxXWM89tQ+6IkWUQm4=";
+      }
+      {
+        rev = "f12bfeec7d9395990f019638b5b2712a21948092";
+        hash = "sha256-jdapWT5jf62KquvypY4Yn844q1v7Y7g115tklxrkxE0=";
+      }
     ];
   };
 

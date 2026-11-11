@@ -13,7 +13,7 @@ Renovate bumps nixpkgs-unstable whenever it moves. CI evaluates the checks, buil
 Two flavors:
 
 - `plain`, for `nixVersions.latest` and `nixVersions.stable`: stock source, PGO only;
-- `patched`, for `nixVersions.latest` when `patches/<version>/` exists for it: PGO plus an upstream fix (NixOS/nix#16244), the evaluation speedups in `patches/<version>/` and `madvise(MADV_HUGEPAGE)` for the Boehm GC heap.
+- `patched`, for `nixVersions.latest` when `patches/<version>/` exists for it: PGO plus upstream commits not yet in the release (NixOS/nix#16244, #16425 and the open #15794), the evaluation speedups in `patches/<version>/` and `madvise(MADV_HUGEPAGE)` for the Boehm GC heap.
 
 | Package | What |
 |---|---|

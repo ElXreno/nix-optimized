@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ben Siraphob <bensiraphob@gmail.com>
+Date: Mon, 4 May 2026 15:04:33 -0700
+Subject: [PATCH] libstore: Speed up printString in Derivation::unparse
+
+BM_UnparseRealDerivationFile mean CPU time (15 repetitions):
+  hello:    2,188 ns ->  1,708 ns (-21.9%)
+  firefox: 35,826 ns -> 33,814 ns (-5.6%)
+
+Assisted-by: OpenAI Codex (GPT-5)
+Assisted-by: Pi (gpt-6.1-sol)
+---
+ src/libstore/derivations.cc | 61 +++++++++++++++++++++++--------------
+ 1 file changed, 38 insertions(+), 23 deletions(-)
+
+diff --git a/src/libstore/derivations.cc b/src/libstore/derivations.cc
+index 9b436d204..ab4cf339b 100644
+--- a/src/libstore/derivations.cc
++++ b/src/libstore/derivations.cc
+@@ -11,6 +11,7 @@
+ #include <boost/container/small_vector.hpp>
+ #include <boost/unordered/concurrent_flat_map.hpp>
+ #include <nlohmann/json.hpp>
++#include <cstring>
+ #include <optional>
+ 
+ namespace nix {
+@@ -530,32 +531,46 @@ Derivation parseDerivation(
+  */
+ static void printString(std::string & res, std::string_view s)
+ {
+-    res += '"';
+-    static constexpr auto chunkSize = 1024;
+-    std::array<char, 2 * chunkSize + 2> buffer;
+-    while (!s.empty()) {
+-        auto chunk = s.substr(0, /*n=*/chunkSize);
+-        s.remove_prefix(chunk.size());
+-        char * buf = buffer.data();
+-        char * p = buf;
+-        for (auto c : chunk)
+-            if (c == '\"' || c == '\\') {
+-                *p++ = '\\';
+-                *p++ = c;
+-            } else if (c == '\n') {
+-                *p++ = '\\';
++    /* Bulk-memcpy unescaped runs and handle escapes inline; write straight
++       into res via resize_and_overwrite (no zero-fill, no scratch buffer). */
++    auto oldSize = res.size();
++    res.resize_and_overwrite(oldSize + s.size() * 2 + 2, [&](char * data, size_t) -> size_t {
++        char * p = data + oldSize;
++        *p++ = '"';
++        while (!s.empty()) {
++            size_t i = 0;
++            while (i < s.size()) {
++                char c = s[i];
++                if (c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t')
++                    break;
++                ++i;
++            }
++            if (i > 0) {
++                std::memcpy(p, s.data(), i);
++                p += i;
++            }
++            if (i == s.size())
++                break;
++            *p++ = '\\';
++            switch (s[i]) {
++            case '\n':
+                 *p++ = 'n';
+-            } else if (c == '\r') {
+-                *p++ = '\\';
++                break;
++            case '\r':
+                 *p++ = 'r';
+-            } else if (c == '\t') {
+-                *p++ = '\\';
++                break;
++            case '\t':
+                 *p++ = 't';
+-            } else
+-                *p++ = c;
+-        res.append(buf, p - buf);
+-    }
+-    res += '"';
++                break;
++            default:
++                *p++ = s[i];
++                break;
++            }
++            s.remove_prefix(i + 1);
++        }
++        *p++ = '"';
++        return p - data;
++    });
+ }
+ 
+ static void printUnquotedString(std::string & res, std::string_view s)
+-- 
+2.56.0
+
