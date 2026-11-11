@@ -126,8 +126,8 @@ let
   versioned = lib.mapAttrs optimize (
     lib.listToAttrs (
       map (nix: lib.nameValuePair "${nameFor nix}-plain" nix) [
-        stable
         latest
+        stable
       ]
     )
     // lib.optionalAttrs (builtins.pathExists patchDir) { ${nameFor latest} = patched; }
