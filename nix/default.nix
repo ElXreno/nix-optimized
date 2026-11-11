@@ -137,7 +137,9 @@ in
   checks = versioned;
 
   packages = versioned // rec {
-    nix-optimized = versioned.${nameFor latest} or nix-optimized-plain;
+    nix-optimized =
+      versioned.${nameFor latest}
+      or (lib.warn "nix-optimized: no patches for Nix ${latestVersion}, building it unpatched" nix-optimized-plain);
     nix-optimized-plain = versioned."${nameFor latest}-plain";
     default = nix-optimized;
   };
