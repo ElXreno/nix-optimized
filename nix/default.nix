@@ -4,80 +4,36 @@
 }:
 let
   inherit (pkgs) lib;
-
-  system = pkgs.stdenv.hostPlatform.system;
+  inherit (pkgs.llvmPackages) bolt;
+  inherit (pkgs.nixVersions) latest stable;
+  inherit (pkgs.stdenv.hostPlatform) system;
 
   generateDir = "/tmp/nix-optimized-pgo";
-
-  bolt = pkgs.llvmPackages.bolt;
-
-  withFlags =
-    flags: nix:
-    nix.overrideAllMesonComponents (
-      _: prevAttrs: {
-        env = (prevAttrs.env or { }) // {
-          NIX_CFLAGS_COMPILE = flags;
-        };
-      }
-    );
-
-  withRelocs =
-    nix:
-    nix.overrideAllMesonComponents (
-      _: prevAttrs: {
-        env = (prevAttrs.env or { }) // {
-          NIX_LDFLAGS = "--emit-relocs";
-        };
-        stripDebugFlags = [
-          "-S"
-          "-p"
-          "--keep-file-symbols"
-        ];
-      }
-    );
-
-  withBolt =
-    profile: nix:
-    nix.overrideAllMesonComponents (
-      _: prevAttrs: {
-        postFixup = (prevAttrs.postFixup or "") + ''
-          for so in $out/lib/libnix*.so.*; do
-            fdata=${profile}/$(basename $so).fdata
-            if [ -e $fdata ]; then
-              ${bolt}/bin/llvm-bolt $so -o $so.bolt -data=$fdata \
-                -reorder-blocks=ext-tsp -reorder-functions=cdsort -split-functions \
-                -split-all-cold -split-eh -no-huge-pages -bolt-info=false
-              mv $so.bolt $so
-            fi
-          done
-        '';
-      }
-    );
-
-  upstreamPatches = {
-    "2.35" = [
-      (pkgs.fetchpatch {
-        name = "nix-16244-dedup-addtemproot.patch";
-        url = "https://github.com/NixOS/nix/commit/d4c237e7216eea15fef6b8339889dbe7a0e1ad54.patch";
-        hash = "sha256-Ef1Aj3Wrm8JttWfPzRpGjeC6t/uue5oX0rAiSCjlCZk=";
-      })
-    ];
-  };
-
-  inherit (pkgs.nixVersions) latest stable;
 
   latestVersion = lib.versions.majorMinor latest.version;
 
   patchDir = root + "/patches/${latestVersion}";
 
+  upstreamPatches = {
+    "2.35" = [
+      {
+        rev = "d4c237e7216eea15fef6b8339889dbe7a0e1ad54";
+        hash = "sha256-Ef1Aj3Wrm8JttWfPzRpGjeC6t/uue5oX0rAiSCjlCZk=";
+      }
+    ];
+  };
+
+  fetchUpstream =
+    { rev, hash }:
+    pkgs.fetchpatch {
+      url = "https://github.com/NixOS/nix/commit/${rev}.patch";
+      inherit hash;
+    };
+
   patched =
     (latest.appendPatches (
-      (upstreamPatches.${latestVersion} or [ ])
-      ++ map (n: patchDir + "/${n}") (
-        lib.attrNames (
-          lib.filterAttrs (n: t: t == "regular" && lib.hasSuffix ".patch" n) (builtins.readDir patchDir)
-        )
-      )
+      map fetchUpstream (upstreamPatches.${latestVersion} or [ ])
+      ++ lib.filesystem.listFilesRecursive patchDir
     )).overrideScope
       (
         _: _: {
@@ -86,6 +42,16 @@ let
           });
         }
       );
+
+  components = f: nix: nix.overrideAllMesonComponents (_: f);
+
+  compile =
+    flags:
+    components (prevAttrs: {
+      env = (prevAttrs.env or { }) // {
+        NIX_CFLAGS_COMPILE = flags;
+      };
+    });
 
   train = nix: ''
     export NIX_STATE_DIR=$TMPDIR/state
@@ -98,18 +64,29 @@ let
   optimize =
     name: nix:
     let
-      instrumented = (withFlags "-fprofile-generate=${generateDir}" nix).overrideAttrs {
-        doCheck = false;
-      };
+      generate = "-fprofile-generate=${generateDir}";
+      use = "-fprofile-use=${pgoProfile} -fprofile-partial-training";
+
+      instrumented = (compile generate nix).overrideAttrs { doCheck = false; };
+
       pgoProfile = pkgs.runCommand "${name}-pgo-profile" { } ''
         export GCOV_PREFIX=$TMPDIR/gcov
         ${train instrumented}
         mkdir $out
         cp $GCOV_PREFIX${generateDir}/*.gcda $out/
       '';
-      pgo = withRelocs (
-        withFlags "-fprofile-use=${pgoProfile} -fprofile-partial-training -fno-reorder-blocks-and-partition" nix
-      );
+
+      pgo = components (prevAttrs: {
+        env = (prevAttrs.env or { }) // {
+          NIX_LDFLAGS = "--emit-relocs";
+        };
+        stripDebugFlags = [
+          "-S"
+          "-p"
+          "--keep-file-symbols"
+        ];
+      }) (compile "${use} -fno-reorder-blocks-and-partition" nix);
+
       boltProfile = pkgs.runCommand "${name}-bolt-profile" { } ''
         mkdir lib fdata $out
         for so in ${lib.concatMapStringsSep " " (p: "${p}/lib/libnix*.so.*") (lib.attrValues pgo.libs)}; do
@@ -122,8 +99,22 @@ let
           ${bolt}/bin/merge-fdata fdata/$n.*.fdata > $out/$n.fdata
         done
       '';
+
+      bolted = components (prevAttrs: {
+        postFixup = (prevAttrs.postFixup or "") + ''
+          for so in $out/lib/libnix*.so.*; do
+            fdata=${boltProfile}/$(basename $so).fdata
+            if [ -e $fdata ]; then
+              ${bolt}/bin/llvm-bolt $so -o $so.bolt -data=$fdata \
+                -reorder-blocks=ext-tsp -reorder-functions=cdsort -split-functions \
+                -split-all-cold -split-eh -no-huge-pages -bolt-info=false
+              mv $so.bolt $so
+            fi
+          done
+        '';
+      }) pgo;
     in
-    (withBolt boltProfile pgo).overrideAttrs (prevAttrs: {
+    bolted.overrideAttrs (prevAttrs: {
       passthru = (prevAttrs.passthru or { }) // {
         inherit instrumented pgoProfile boltProfile;
       };
