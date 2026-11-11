@@ -86,11 +86,16 @@ let
       );
 
   train = nix: ''
-    export NIX_STATE_DIR=$TMPDIR/state
     export NIX_CONFIG="extra-experimental-features = nix-command"
-    ${nix}/bin/nix-env -qaP --json --meta -f ${pkgs.path} > /dev/null
-    ${nix}/bin/nix eval --read-only --raw --impure --expr \
-      'import ${root + "/workloads/instantiate.nix"} { nixpkgs = ${pkgs.path}; system = "${system}"; }'
+    NIX_STATE_DIR=$TMPDIR/state-query ${nix}/bin/nix-env -qaP --json --meta -f ${pkgs.path} > /dev/null &
+    query=$!
+    NIX_STATE_DIR=$TMPDIR/state-instantiate ${nix}/bin/nix eval --read-only --raw --impure --expr \
+      'import ${
+        root + "/workloads/instantiate.nix"
+      } { nixpkgs = ${pkgs.path}; system = "${system}"; }' &
+    instantiate=$!
+    wait $query
+    wait $instantiate
   '';
 
   optimize =
