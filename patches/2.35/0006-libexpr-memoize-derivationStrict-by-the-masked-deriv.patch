@@ -6,14 +6,14 @@ Subject: [PATCH] libexpr: memoize derivationStrict by the masked derivation
 
 ---
  src/libexpr/include/nix/expr/eval.hh |  6 +++
- src/libexpr/primops.cc               | 77 ++++++++++++++++++++++++++--
- 2 files changed, 80 insertions(+), 3 deletions(-)
+ src/libexpr/primops.cc               | 80 ++++++++++++++++++++++++++--
+ 2 files changed, 82 insertions(+), 4 deletions(-)
 
 diff --git a/src/libexpr/include/nix/expr/eval.hh b/src/libexpr/include/nix/expr/eval.hh
-index f0a89343d..4970fa625 100644
+index 34c2bef98..7944d5013 100644
 --- a/src/libexpr/include/nix/expr/eval.hh
 +++ b/src/libexpr/include/nix/expr/eval.hh
-@@ -374,6 +374,12 @@ public:
+@@ -382,6 +382,12 @@ public:
       */
      RepairFlag repair;
  
@@ -27,7 +27,7 @@ index f0a89343d..4970fa625 100644
       * The accessor corresponding to `store`.
       */
 diff --git a/src/libexpr/primops.cc b/src/libexpr/primops.cc
-index a1daba6ab..27ae99707 100644
+index a1daba6ab..2dab6df2e 100644
 --- a/src/libexpr/primops.cc
 +++ b/src/libexpr/primops.cc
 @@ -19,6 +19,7 @@
@@ -128,7 +128,7 @@ index a1daba6ab..27ae99707 100644
      }
  
      /* Write the resulting term into the Nix store directory.
-@@ -1856,8 +1924,11 @@ static void derivationStrictInternal(EvalState & state, std::string_view drvName
+@@ -1856,8 +1924,9 @@ static void derivationStrictInternal(EvalState & state, std::string_view drvName
         Unless we are in read-only mode, that is, in which case we do not
         write anything. Users commonly do this to speed up evaluation in
         contexts where they don't actually want to build anything. */
@@ -137,11 +137,25 @@ index a1daba6ab..27ae99707 100644
 +    auto drvPath = memoDrvPath                ? *memoDrvPath
 +                   : settings.readOnlyMode ? computeStorePath(*state.store, drv)
 +                                           : state.store->writeDerivation(drv, state.repair);
-+    if (memoKey && !memoDrvPath)
-+        state.derivationStrictMemo->entries.lock()->emplace(*memoKey, std::pair{drvPath, drv.outputs});
      auto drvPathS = state.store->printStorePath(drvPath);
  
      printMsg(lvlChatty, "instantiated '%1%' -> '%2%'", drvName, drvPathS);
+@@ -1865,11 +1934,14 @@ static void derivationStrictInternal(EvalState & state, std::string_view drvName
+     /* Optimisation, but required in read-only mode! because in that
+        case we don't actually write store derivations, so we can't
+        read them later. */
+-    if (!drvHashes.contains(drvPath)) {
++    if (!memoDrvPath && !drvHashes.contains(drvPath)) {
+         auto h = hashDerivationModulo(*state.store, drv, false);
+         drvHashes.insert_or_assign(drvPath, std::move(h));
+     }
+ 
++    if (memoKey && !memoDrvPath)
++        state.derivationStrictMemo->entries.lock()->emplace(*memoKey, std::pair{drvPath, drv.outputs});
++
+     auto result = state.buildBindings(1 + drv.outputs.size());
+     result.alloc(state.s.drvPath)
+         .mkString(
 -- 
-2.55.0
+2.56.0
 
