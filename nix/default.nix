@@ -62,12 +62,28 @@ let
   components = f: nix: nix.overrideAllMesonComponents (_: f);
 
   compile =
-    flags:
-    components (prevAttrs: {
-      env = (prevAttrs.env or { }) // {
-        NIX_CFLAGS_COMPILE = flags;
+    flags: depFlags: nix:
+    let
+      addDepFlags = prevAttrs: {
+        env = (prevAttrs.env or { }) // {
+          NIX_CFLAGS_COMPILE = toString (prevAttrs.env.NIX_CFLAGS_COMPILE or "") + " ${depFlags}";
+        };
       };
-    });
+    in
+    components
+      (prevAttrs: {
+        env = (prevAttrs.env or { }) // {
+          NIX_CFLAGS_COMPILE = flags;
+        };
+      })
+      (
+        nix.overrideScope (
+          _: prev: {
+            boehmgc = (prev.boehmgc or pkgs.nixDependencies.boehmgc).overrideAttrs addDepFlags;
+            mimalloc = pkgs.mimalloc.overrideAttrs addDepFlags;
+          }
+        )
+      );
 
   train = nix: ''
     export NIX_STATE_DIR=$TMPDIR/state
@@ -83,7 +99,7 @@ let
       generate = "-fprofile-generate=${generateDir}";
       use = "-fprofile-use=${pgoProfile} -fprofile-partial-training";
 
-      instrumented = (compile generate nix).overrideAttrs { doCheck = false; };
+      instrumented = (compile generate generate nix).overrideAttrs { doCheck = false; };
 
       pgoProfile = pkgs.runCommand "${name}-pgo-profile" { } ''
         export GCOV_PREFIX=$TMPDIR/gcov
@@ -92,16 +108,23 @@ let
         cp $GCOV_PREFIX${generateDir}/*.gcda $out/
       '';
 
-      pgo = components (prevAttrs: {
-        env = (prevAttrs.env or { }) // {
-          NIX_LDFLAGS = "--emit-relocs";
-        };
-        stripDebugFlags = [
-          "-S"
-          "-p"
-          "--keep-file-symbols"
-        ];
-      }) (compile "${use} -fno-reorder-blocks-and-partition" nix);
+      pgo =
+        components
+          (prevAttrs: {
+            env = (prevAttrs.env or { }) // {
+              NIX_LDFLAGS = "--emit-relocs";
+            };
+            stripDebugFlags = [
+              "-S"
+              "-p"
+              "--keep-file-symbols"
+            ];
+          })
+          (
+            compile "${use} -fno-reorder-blocks-and-partition"
+              "${use} -fprofile-correction -Wno-error=coverage-mismatch"
+              nix
+          );
 
       boltProfile = pkgs.runCommand "${name}-bolt-profile" { } ''
         mkdir lib fdata $out
