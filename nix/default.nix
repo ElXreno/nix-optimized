@@ -12,7 +12,14 @@ let
 
   latestVersion = lib.versions.majorMinor latest.version;
 
-  patchDir = root + "/patches/${latestVersion}";
+  patchDirFor = nix: root + "/patches/${lib.versions.majorMinor nix.version}";
+
+  patchable = lib.filter (nix: builtins.pathExists (patchDirFor nix)) (
+    lib.unique [
+      latest
+      stable
+    ]
+  );
 
   upstreamPatches = {
     "2.35" = [
@@ -46,10 +53,11 @@ let
       inherit hash;
     };
 
-  patched =
-    (latest.appendPatches (
-      map fetchUpstream (upstreamPatches.${latestVersion} or [ ])
-      ++ lib.filesystem.listFilesRecursive patchDir
+  patch =
+    nix:
+    (nix.appendPatches (
+      map fetchUpstream (upstreamPatches.${lib.versions.majorMinor nix.version} or [ ])
+      ++ lib.filesystem.listFilesRecursive (patchDirFor nix)
     )).overrideScope
       (
         _: _: {
@@ -174,16 +182,25 @@ let
         stable
       ]
     )
-    // lib.optionalAttrs (builtins.pathExists patchDir) { ${nameFor latest} = patched; }
+    // lib.listToAttrs (
+      lib.reverseList (map (nix: lib.nameValuePair (nameFor nix) (patch nix)) patchable)
+    )
   );
+
+  newest = lib.head patchable;
 in
 {
   checks = versioned;
 
   packages = versioned // rec {
     nix-optimized =
-      versioned.${nameFor latest}
-      or (lib.warn "nix-optimized: no patches for Nix ${latestVersion}, building it unpatched" nix-optimized-plain);
+      if patchable == [ ] then
+        lib.warn "nix-optimized: no patches for Nix ${latestVersion}, building it unpatched" nix-optimized-plain
+      else if newest.version != latest.version then
+        lib.warn "nix-optimized: no patches for Nix ${latestVersion}, using patched ${newest.version}"
+          versioned.${nameFor newest}
+      else
+        versioned.${nameFor newest};
     nix-optimized-plain = versioned."${nameFor latest}-plain";
     default = nix-optimized;
   };
