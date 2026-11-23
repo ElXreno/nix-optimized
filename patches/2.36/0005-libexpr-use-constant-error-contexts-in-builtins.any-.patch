@@ -1,0 +1,33 @@
+From 4a93d653c727979900698a61d711a80c9d4cfd70 Mon Sep 17 00:00:00 2001
+From: ElXreno <elxreno@gmail.com>
+Date: Sun, 4 Oct 2026 15:45:23 +0300
+Subject: [PATCH 05/12] libexpr: use constant error contexts in builtins.any
+ and builtins.all
+
+---
+ src/libexpr/primops.cc | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/libexpr/primops.cc b/src/libexpr/primops.cc
+index 3c65e98c5..b713942aa 100644
+--- a/src/libexpr/primops.cc
++++ b/src/libexpr/primops.cc
+@@ -4062,11 +4062,13 @@ static void anyOrAll(bool any, EvalState & state, Value * const * args, Value &
+     state.forceFunction(
+         *args[0],
+         noPos,
+-        std::string("while evaluating the first argument passed to builtins.") + (any ? "any" : "all"));
++        any ? "while evaluating the first argument passed to builtins.any"
++            : "while evaluating the first argument passed to builtins.all");
+     state.forceList(
+         *args[1],
+         noPos,
+-        std::string("while evaluating the second argument passed to builtins.") + (any ? "any" : "all"));
++        any ? "while evaluating the second argument passed to builtins.any"
++            : "while evaluating the second argument passed to builtins.all");
+ 
+     std::string_view errorCtx = any ? "while evaluating the return value of the function passed to builtins.any"
+                                     : "while evaluating the return value of the function passed to builtins.all";
+-- 
+2.56.0
+
