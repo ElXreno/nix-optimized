@@ -1,0 +1,94 @@
+From ccc4ff8ded08dd695c08a9f64c3dff9258cfd9ab Mon Sep 17 00:00:00 2001
+From: ElXreno <elxreno@gmail.com>
+Date: Sun, 4 Oct 2026 15:53:01 +0300
+Subject: [PATCH 07/12] libexpr: skip re-adding builtins.toFile paths written
+ in this evaluation
+
+---
+ src/libexpr/include/nix/expr/eval.hh |  6 ++++
+ src/libexpr/primops.cc               | 45 +++++++++++++++++-----------
+ 2 files changed, 34 insertions(+), 17 deletions(-)
+
+diff --git a/src/libexpr/include/nix/expr/eval.hh b/src/libexpr/include/nix/expr/eval.hh
+index 311d9381b..bae18802b 100644
+--- a/src/libexpr/include/nix/expr/eval.hh
++++ b/src/libexpr/include/nix/expr/eval.hh
+@@ -441,6 +441,12 @@ public:
+     struct DerivationStrictMemo;
+     std::shared_ptr<DerivationStrictMemo> derivationStrictMemo;
+ 
++    /**
++     * Paths written by `builtins.toFile` in this evaluation.
++     */
++    struct ToFileMemo;
++    std::shared_ptr<ToFileMemo> toFileMemo;
++
+     /**
+      * The accessor corresponding to `store`.
+      */
+diff --git a/src/libexpr/primops.cc b/src/libexpr/primops.cc
+index 78218fd9b..17f091f8c 100644
+--- a/src/libexpr/primops.cc
++++ b/src/libexpr/primops.cc
+@@ -1481,6 +1481,11 @@ static std::optional<Hash> derivationStrictMemoKey(const Derivation & drv)
+     return sink.finish().hash;
+ }
+ 
++struct EvalState::ToFileMemo
++{
++    Sync<std::set<StorePath>> written;
++};
++
+ static void derivationStrictInternal(EvalState & state, std::string_view name, const Bindings * attrs, Value & v);
+ 
+ /* Construct (as a unobservable side effect) a Nix derivation
+@@ -2854,23 +2859,29 @@ static void prim_toFile(EvalState & state, CallSite callSite, Value * const * ar
+                 .debugThrow();
+     }
+ 
+-    auto storePath = settings.readOnlyMode ? state.store->makeFixedOutputPathFromCA(
+-                                                 name,
+-                                                 TextInfo{
+-                                                     .hash = hashString(HashAlgorithm::SHA256, contents),
+-                                                     .references = std::move(refs),
+-                                                 })
+-                                           : ({
+-                                                 StringSource s{contents};
+-                                                 state.store->addToStoreFromDump(
+-                                                     s,
+-                                                     name,
+-                                                     FileSerialisationMethod::Flat,
+-                                                     ContentAddressMethod::Raw::Text,
+-                                                     HashAlgorithm::SHA256,
+-                                                     refs,
+-                                                     state.repair);
+-                                             });
++    auto storePath = state.store->makeFixedOutputPathFromCA(
++        name,
++        TextInfo{
++            .hash = hashString(HashAlgorithm::SHA256, contents),
++            .references = refs,
++        });
++
++    if (!settings.readOnlyMode) {
++        if (!state.toFileMemo)
++            state.toFileMemo = std::make_shared<EvalState::ToFileMemo>();
++        if (state.repair || !state.toFileMemo->written.lock()->count(storePath)) {
++            StringSource s{contents};
++            storePath = state.store->addToStoreFromDump(
++                s,
++                name,
++                FileSerialisationMethod::Flat,
++                ContentAddressMethod::Raw::Text,
++                HashAlgorithm::SHA256,
++                refs,
++                state.repair);
++            state.toFileMemo->written.lock()->insert(storePath);
++        }
++    }
+ 
+     /* Note: we don't need to add `context' to the context of the
+        result, since `storePath' itself has references to the paths
+-- 
+2.56.0
+

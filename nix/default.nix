@@ -44,6 +44,20 @@ let
         hash = "sha256-jdapWT5jf62KquvypY4Yn844q1v7Y7g115tklxrkxE0=";
       }
     ];
+    "2.36" = [
+      {
+        rev = "163bc20dc21cdd2cada95fa0c11c7b0c0c574221";
+        hash = "sha256-i/nbvNBnbndD5M4BSOnqMzipu1NVAO88ea0mDSmo8xQ=";
+      }
+      {
+        rev = "fc8f3a516c4c65079de03740d25e16719d7ed818";
+        hash = "sha256-/Ebr0KB7WC8eOWaB29PruE39SqxXWM89tQ+6IkWUQm4=";
+      }
+      {
+        rev = "f12bfeec7d9395990f019638b5b2712a21948092";
+        hash = "sha256-jdapWT5jf62KquvypY4Yn844q1v7Y7g115tklxrkxE0=";
+      }
+    ];
   };
 
   fetchUpstream =

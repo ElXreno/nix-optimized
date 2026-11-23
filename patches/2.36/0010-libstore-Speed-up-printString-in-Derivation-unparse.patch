@@ -1,0 +1,78 @@
+From 7d24fa595b814fa89508b142e9a72581a8553174 Mon Sep 17 00:00:00 2001
+From: Ben Siraphob <bensiraphob@gmail.com>
+Date: Mon, 4 May 2026 15:04:33 -0700
+Subject: [PATCH 10/12] libstore: Speed up printString in Derivation::unparse
+
+BM_UnparseRealDerivationFile mean CPU time (15 repetitions):
+  hello:    2,188 ns ->  1,708 ns (-21.9%)
+  firefox: 35,826 ns -> 33,814 ns (-5.6%)
+
+Assisted-by: OpenAI Codex (GPT-5)
+Assisted-by: Pi (gpt-6.1-sol)
+---
+ src/libstore/derivation/aterm.cc | 40 ++++++++++++++++++--------------
+ 1 file changed, 22 insertions(+), 18 deletions(-)
+
+diff --git a/src/libstore/derivation/aterm.cc b/src/libstore/derivation/aterm.cc
+index 438baf481..87bd34f87 100644
+--- a/src/libstore/derivation/aterm.cc
++++ b/src/libstore/derivation/aterm.cc
+@@ -16,6 +16,7 @@
+ #include <nlohmann/json.hpp>
+ #include <algorithm>
+ #include <array>
++#include <cstring>
+ #include <optional>
+ #include <ranges>
+ 
+@@ -564,26 +565,29 @@ Full parse(
+  */
+ static void printString(std::string & res, std::string_view s)
+ {
+-    res += '"';
+-    static constexpr auto chunkSize = 1024;
+-    std::array<char, 2 * chunkSize + 2> buffer;
+-    while (!s.empty()) {
+-        auto chunk = s.substr(0, /*n=*/chunkSize);
+-        s.remove_prefix(chunk.size());
+-        char * buf = buffer.data();
+-        char * p = buf;
+-        for (auto c : chunk) {
+-            auto escape = unescapes.lookup(c);
+-            if (escape.has_value()) {
+-                *p++ = '\\';
+-                *p++ = escape.value();
+-            } else {
+-                *p++ = c;
++    /* Bulk-memcpy unescaped runs and handle escapes inline; write straight
++       into res via resize_and_overwrite (no zero-fill, no scratch buffer). */
++    auto oldSize = res.size();
++    res.resize_and_overwrite(oldSize + s.size() * 2 + 2, [&](char * data, size_t) -> size_t {
++        char * p = data + oldSize;
++        *p++ = '"';
++        while (!s.empty()) {
++            size_t i = 0;
++            while (i < s.size() && !unescapes.lookup(s[i]).has_value())
++                ++i;
++            if (i > 0) {
++                std::memcpy(p, s.data(), i);
++                p += i;
+             }
++            if (i == s.size())
++                break;
++            *p++ = '\\';
++            *p++ = unescapes.lookup(s[i]).value();
++            s.remove_prefix(i + 1);
+         }
+-        res.append(buf, p - buf);
+-    }
+-    res += '"';
++        *p++ = '"';
++        return p - data;
++    });
+ }
+ 
+ static void printUnquotedString(std::string & res, std::string_view s)
+-- 
+2.56.0
+
